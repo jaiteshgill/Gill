@@ -9,8 +9,8 @@ const MODEL = 'claude-sonnet-4-20250514'
 const API_VERSION = '2023-06-01'
 
 function getApiKey(): string {
-  const key = import.meta.env.VITE_ANTHROPIC_API_KEY
-  if (!key) throw new Error('[anthropic] VITE_ANTHROPIC_API_KEY is not set')
+  const key = localStorage.getItem('gill_anthropic_api_key') || import.meta.env.VITE_ANTHROPIC_API_KEY
+  if (!key) throw new Error('[anthropic] API key not set — open Settings to add one')
   return key
 }
 

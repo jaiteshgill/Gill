@@ -1,12 +1,44 @@
-import { Settings, User, Sun, Moon } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Settings, User, Sun, Moon, MessageCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface TopBarProps {
   isDarkMode: boolean
   onToggleDarkMode: () => void
+  questionsOpen: boolean
+  onToggleQuestions: () => void
+  fileName?: string | null
 }
 
-export function TopBar({ isDarkMode, onToggleDarkMode }: TopBarProps) {
+export function TopBar({ isDarkMode, onToggleDarkMode, questionsOpen, onToggleQuestions, fileName }: TopBarProps) {
+  const defaultTitle = fileName ?? 'Gill Notes'
+  const [title, setTitle] = useState(defaultTitle)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(title)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const next = fileName ?? 'Gill Notes'
+    setTitle(next)
+    setDraft(next)
+  }, [fileName])
+
+  const startEdit = () => {
+    setDraft(title)
+    setEditing(true)
+  }
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select()
+  }, [editing])
+
+  const commit = () => {
+    const trimmed = draft.trim()
+    if (trimmed) setTitle(trimmed)
+    else setDraft(title)
+    setEditing(false)
+  }
+
   return (
     <header
       className="h-[60px] w-full flex items-center justify-between px-4 border-b shrink-0 relative"
@@ -31,12 +63,33 @@ export function TopBar({ isDarkMode, onToggleDarkMode }: TopBarProps) {
       </div>
 
       <div className="absolute left-1/2 -translate-x-1/2">
-        <h1
-          className="text-base font-medium"
-          style={{ color: isDarkMode ? '#e5e5e5' : '#1a1a1a' }}
-        >
-          ECE 124 — Digital Logic
-        </h1>
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => {
+              if (e.key === 'Enter') commit()
+              if (e.key === 'Escape') { setDraft(title); setEditing(false) }
+            }}
+            className="text-base font-medium bg-transparent border-b outline-none text-center"
+            style={{
+              color: isDarkMode ? '#e5e5e5' : '#1a1a1a',
+              borderColor: isDarkMode ? '#555' : '#999',
+              minWidth: 80,
+              width: Math.max(80, draft.length * 9),
+            }}
+          />
+        ) : (
+          <h1
+            onClick={startEdit}
+            className="text-base font-medium cursor-pointer hover:opacity-70 transition-opacity"
+            style={{ color: isDarkMode ? '#e5e5e5' : '#1a1a1a' }}
+          >
+            {title}
+          </h1>
+        )}
       </div>
 
       <div className="flex items-center gap-2">
@@ -56,6 +109,15 @@ export function TopBar({ isDarkMode, onToggleDarkMode }: TopBarProps) {
           style={{ color: isDarkMode ? '#e5e5e5' : '#666666' }}
         >
           <Settings className="h-5 w-5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggleQuestions}
+          className="hover:bg-black/5"
+          style={{ color: questionsOpen ? '#5b7fa6' : isDarkMode ? '#e5e5e5' : '#666666' }}
+        >
+          <MessageCircle className="h-5 w-5" />
         </Button>
         <Button
           variant="ghost"
