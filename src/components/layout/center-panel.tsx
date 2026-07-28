@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -16,320 +16,176 @@ interface CenterPanelProps {
   onImport: (file: File) => void
 }
 
-const ZOOM_STEP = 0.15
-const ZOOM_MIN = 0.5
-const ZOOM_MAX = 3
+const PAGE_PADDING = 96
 
-const TOP_BAR = 60, PLAY_BAR = 56, CANVAS_PADDING = 56
-
-function useFitSize(pageSize: { w: number; h: number } | null) {
-  const [viewport, setViewport] = useState({ w: window.innerWidth, h: window.innerHeight })
+function useContainerHeight() {
+  const [h, setH] = useState(0)
   useEffect(() => {
-    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight })
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    const el = document.getElementById('pdf-scroll')
+    if (!el) return
+    setH(el.clientHeight)
+    const ro = new ResizeObserver(() => setH(el.clientHeight))
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
-
-  const maxW = viewport.w * 0.68
-  const maxH = viewport.h - TOP_BAR - PLAY_BAR - CANVAS_PADDING
-
-  if (!pageSize) return { displayW: maxW, displayH: maxH }
-
-  const ratio = pageSize.w / pageSize.h
-  const hFromW = maxW / ratio
-  if (hFromW <= maxH) return { displayW: maxW, displayH: hFromW }
-  return { displayW: maxH * ratio, displayH: maxH }
+  return h
 }
 
 function PdfViewer({ url, isDarkMode }: { url: string; isDarkMode: boolean }) {
   const [numPages, setNumPages] = useState<number>(0)
-  const [currentPage, setCurrentPage] = useState<number>(1)
-  const [locked, setLocked] = useState<boolean>(false)
-  const [editingPage, setEditingPage] = useState(false)
-  const [pageInput, setPageInput] = useState('')
-  const [pageSize, setPageSize] = useState<{ w: number; h: number } | null>(null)
-  const [zoom, setZoom] = useState<number>(1)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const pageInputRef = useRef<HTMLInputElement>(null)
-  const pageRefs = useRef<(HTMLDivElement | null)[]>([])
+  const [deletedPages, setDeletedPages] = useState<Set<number>>(new Set())
+  const [aspectRatio, setAspectRatio] = useState<number | null>(null)
+  const [currentIdx, setCurrentIdx] = useState(0)
 
-  const { displayW, displayH } = useFitSize(pageSize)
+  const containerH = useContainerHeight()
+  // derive page width from actual container height so slot height == container height exactly
+  const pageWidth = aspectRatio && containerH > 0
+    ? Math.round((containerH - PAGE_PADDING * 2) * aspectRatio)
+    : 0
 
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return
-      e.preventDefault()
-      const delta = e.deltaY > 0 ? -0.05 : 0.05
-      setZoom(z => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +(z + delta).toFixed(2))))
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+  const visiblePages = Array.from({ length: numPages }, (_, i) => i + 1)
+    .filter(p => !deletedPages.has(p))
 
-  // arrow key nav only when locked
-  useEffect(() => {
-    if (!locked) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowDown' || e.key === 'PageDown') {
-        e.preventDefault()
-        setCurrentPage(p => Math.min(numPages, p + 1))
-      } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
-        e.preventDefault()
-        setCurrentPage(p => Math.max(1, p - 1))
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [locked, numPages])
+  const deletePage = (pageNum: number) =>
+    setDeletedPages(prev => new Set([...prev, pageNum]))
 
-  const prevLockedRef = useRef(locked)
-  useLayoutEffect(() => {
-    const wasLocked = prevLockedRef.current
-    prevLockedRef.current = locked
-    // when unlocking: hidden pages above currentPage reappear and push it down —
-    // use getBoundingClientRect to find where currentPage actually is now and snap there
-    if (wasLocked && !locked) {
-      const container = containerRef.current
-      const page = pageRefs.current[currentPage - 1]
-      if (container && page) {
-        const containerTop = container.getBoundingClientRect().top
-        const pageTop = page.getBoundingClientRect().top
-        container.scrollTop = pageTop - containerTop
-      }
-    }
-  }, [locked, currentPage])
+  const getContainer = () => document.getElementById('pdf-scroll') as HTMLElement | null
 
-  // track visible page while scrolling (scroll mode only)
-  useEffect(() => {
-    if (locked || numPages === 0) return
-    const container = containerRef.current
+  const navigate = (dir: 1 | -1) => {
+    const container = getContainer()
     if (!container) return
+    const slotH = container.clientHeight
+    // read live scrollTop — no stale state
+    const live = Math.round(container.scrollTop / slotH)
+    const next = Math.max(0, Math.min(visiblePages.length - 1, live + dir))
+    container.scrollTo({ top: next * slotH, behavior: 'smooth' })
+    setCurrentIdx(next)
+  }
+
+  // track current page from scroll position
+  useEffect(() => {
+    const container = getContainer()
+    if (!container || !visiblePages.length) return
     const onScroll = () => {
-      for (let i = 0; i < pageRefs.current.length; i++) {
-        const el = pageRefs.current[i]
-        if (!el) continue
-        const rect = el.getBoundingClientRect()
-        const containerRect = container.getBoundingClientRect()
-        if (rect.top >= containerRect.top - rect.height / 2) {
-          setCurrentPage(i + 1)
-          break
-        }
-      }
+      const slotH = container.clientHeight
+      if (!slotH) return
+      // crossing the midpoint of a page switches to that page
+      setCurrentIdx(Math.min(Math.round(container.scrollTop / slotH), visiblePages.length - 1))
     }
     container.addEventListener('scroll', onScroll, { passive: true })
     return () => container.removeEventListener('scroll', onScroll)
-  }, [locked, numPages])
-
-  const prevPage = () => {
-    const p = Math.max(1, currentPage - 1)
-    setCurrentPage(p)
-    if (!locked) pageRefs.current[p - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-  const nextPage = () => {
-    const p = Math.min(numPages, currentPage + 1)
-    setCurrentPage(p)
-    if (!locked) pageRefs.current[p - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-
-  useEffect(() => {
-    if (editingPage) pageInputRef.current?.select()
-  }, [editingPage])
-
-  const zoomIn  = () => setZoom(z => Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2)))
-  const zoomOut = () => setZoom(z => Math.max(ZOOM_MIN, +(z - ZOOM_STEP).toFixed(2)))
-  const zoomReset = () => setZoom(1)
-
-  const pageWidth = Math.round(displayW)
+  }, [visiblePages.length])
 
   const btnStyle: React.CSSProperties = {
-    background: isDarkMode ? 'rgba(40,40,40,0.9)' : 'rgba(255,255,255,0.92)',
-    color: isDarkMode ? '#ccc' : '#444',
-    border: `1px solid ${isDarkMode ? '#3a3a3a' : '#ddd'}`,
-    borderRadius: 6,
-    width: 30,
-    height: 30,
+    width: 36,
+    height: 36,
+    borderRadius: '50%',
+    border: 'none',
+    cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    cursor: 'pointer',
-    fontSize: 16,
-    lineHeight: 1,
-    userSelect: 'none',
-  }
-
-  const dividerStyle: React.CSSProperties = {
-    width: 1,
-    height: 18,
-    background: isDarkMode ? '#3a3a3a' : '#ddd',
-    margin: '0 4px',
+    fontSize: 18,
+    background: isDarkMode ? 'rgba(40,40,40,0.92)' : 'rgba(255,255,255,0.92)',
+    color: isDarkMode ? '#ccc' : '#444',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
   }
 
   return (
-    <div style={{ width: displayW }} className="relative">
-      {/* nav + zoom controls */}
-      <div
-        className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl shadow-lg"
-        style={{
-          background: isDarkMode ? 'rgba(30,30,30,0.92)' : 'rgba(255,255,255,0.92)',
-          border: `1px solid ${isDarkMode ? '#3a3a3a' : '#e0e0e0'}`,
-          backdropFilter: 'blur(8px)',
-        }}
+    <>
+      <Document
+        file={url}
+        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
       >
-        {/* scroll / lock toggle */}
+        {visiblePages.map((pageNum) => (
+          <div
+            key={pageNum}
+            className="relative group"
+            style={{ lineHeight: 0, paddingTop: PAGE_PADDING, paddingBottom: PAGE_PADDING }}
+          >
+            <Page
+              pageNumber={pageNum}
+              width={pageWidth || undefined}
+              onLoadSuccess={(page) => {
+                if (!aspectRatio)
+                  setAspectRatio(page.originalWidth / page.originalHeight)
+              }}
+              renderTextLayer={false}
+              renderAnnotationLayer={false}
+              className="shadow-lg"
+            />
+            <button
+              onClick={() => deletePage(pageNum)}
+              title={`Delete page ${pageNum}`}
+              className="absolute opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+              style={{
+                top: PAGE_PADDING + 8,
+                right: 8,
+                width: 26,
+                height: 26,
+                borderRadius: '50%',
+                border: 'none',
+                cursor: 'pointer',
+                background: 'rgba(210, 45, 45, 0.9)',
+                color: '#fff',
+                fontSize: 17,
+                fontWeight: 700,
+                lineHeight: 1,
+                boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+              }}
+            >
+              ×
+            </button>
+            <div
+              className="absolute left-1/2 -translate-x-1/2 px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+              style={{ bottom: PAGE_PADDING + 8, background: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 11 }}
+            >
+              {pageNum}
+            </div>
+          </div>
+        ))}
+      </Document>
+
+      {deletedPages.size > 0 && (
         <button
-          onClick={() => setLocked(l => !l)}
-          title={locked ? 'Locked — click to scroll freely' : 'Scroll — click to lock'}
+          onClick={() => setDeletedPages(new Set())}
+          className="text-xs px-3 py-1.5 rounded-lg mb-8"
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-            background: 'none',
+            background: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)',
+            color: isDarkMode ? '#aaa' : '#555',
             border: 'none',
             cursor: 'pointer',
-            padding: '0 2px',
-            userSelect: 'none',
           }}
         >
-          <span style={{ fontSize: 10, fontWeight: 600, color: isDarkMode ? '#666' : '#aaa', letterSpacing: '0.04em' }}>
-            SCROLL LOCK
-          </span>
-          {/* pill track */}
-          <span style={{
-            position: 'relative',
-            display: 'inline-flex',
-            width: 32,
-            height: 18,
-            borderRadius: 9,
-            background: locked
-              ? (isDarkMode ? '#3a6a9e' : '#5b7fa6')
-              : (isDarkMode ? '#3a3a3a' : '#d0d0d0'),
-            transition: 'background 0.2s',
-            flexShrink: 0,
-          }}>
-            {/* knob */}
-            <span style={{
-              position: 'absolute',
-              top: 2,
-              left: locked ? 16 : 2,
-              width: 14,
-              height: 14,
-              borderRadius: '50%',
-              background: '#fff',
-              transition: 'left 0.2s',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
-            }} />
-          </span>
+          Restore {deletedPages.size} deleted page{deletedPages.size > 1 ? 's' : ''}
         </button>
+      )}
 
-        <div style={dividerStyle} />
-
-        <button style={btnStyle} onClick={prevPage} disabled={currentPage <= 1} title="Previous slide (↑)">↑</button>
-        {editingPage ? (
-          <input
-            ref={pageInputRef}
-            type="text"
-            inputMode="numeric"
-            value={pageInput}
-            onChange={e => setPageInput(e.target.value.replace(/\D/g, ''))}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                const n = parseInt(pageInput, 10)
-                if (n >= 1 && n <= numPages) {
-                  setCurrentPage(n)
-                  if (!locked) pageRefs.current[n - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                }
-                setEditingPage(false)
-              } else if (e.key === 'Escape') {
-                setEditingPage(false)
-              }
-            }}
-            onBlur={() => {
-              const n = parseInt(pageInput, 10)
-              if (n >= 1 && n <= numPages) {
-                setCurrentPage(n)
-                if (!locked) pageRefs.current[n - 1]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-              }
-              setEditingPage(false)
-            }}
-            className="text-xs font-medium tabular-nums text-center focus:outline-none"
-            style={{
-              width: 48,
-              background: 'transparent',
-              color: isDarkMode ? '#aaa' : '#666',
-              border: `1px solid ${isDarkMode ? '#555' : '#bbb'}`,
-              borderRadius: 4,
-              padding: '1px 4px',
-            }}
-          />
-        ) : (
-          <span
-            onClick={() => { setPageInput(String(currentPage)); setEditingPage(true) }}
-            className="text-xs font-medium tabular-nums cursor-text select-none px-1"
-            style={{ color: isDarkMode ? '#aaa' : '#666', minWidth: 48, textAlign: 'center' }}
-            title="Click to jump to slide"
-          >
-            {currentPage} / {numPages || '—'}
-          </span>
-        )}
-        <button style={btnStyle} onClick={nextPage} disabled={currentPage >= numPages} title="Next slide (↓)">↓</button>
-
-        <div style={dividerStyle} />
-
-        <button style={btnStyle} onClick={zoomOut} disabled={zoom <= ZOOM_MIN}>−</button>
-        <span
-          onClick={zoomReset}
-          className="text-xs font-medium tabular-nums cursor-pointer select-none px-1"
-          style={{ color: isDarkMode ? '#aaa' : '#666', minWidth: 40, textAlign: 'center' }}
-          title="Reset zoom"
+      {/* fixed nav buttons */}
+      {visiblePages.length > 1 && (
+        <div
+          className="fixed bottom-20 right-6 flex flex-col gap-2 z-50"
+          style={{ pointerEvents: 'auto' }}
         >
-          {Math.round(zoom * 100)}%
-        </span>
-        <button style={btnStyle} onClick={zoomIn} disabled={zoom >= ZOOM_MAX}>+</button>
-      </div>
-
-      <div
-        ref={containerRef}
-        className="overflow-auto"
-        style={{
-          width: displayW,
-          height: displayH,
-          backgroundColor: isDarkMode ? '#000000' : '#ffffff',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: locked ? 'center' : 'flex-start',
-        }}
-      >
-        <div style={{ zoom }}>
-          <Document
-            file={url}
-            onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-            className="flex flex-col items-center py-4 gap-4"
+          <button
+            style={{ ...btnStyle, opacity: currentIdx <= 0 ? 0.3 : 1 }}
+            disabled={currentIdx <= 0}
+            onClick={() => navigate(-1)}
+            title="Previous page"
           >
-            {pageWidth > 0 && numPages > 0 && Array.from({ length: numPages }, (_, i) => (
-              <div
-                key={i + 1}
-                ref={el => { pageRefs.current[i] = el }}
-                style={locked && i + 1 !== currentPage ? { display: 'none' } : undefined}
-              >
-                <Page
-                  pageNumber={i + 1}
-                  width={pageWidth}
-                  onLoadSuccess={(page) => {
-                    if (i === 0 && !pageSize) setPageSize({ w: page.originalWidth, h: page.originalHeight })
-                  }}
-                  renderTextLayer={true}
-                  renderAnnotationLayer={false}
-                  className="shadow-md"
-                />
-              </div>
-            ))}
-          </Document>
+            ↑
+          </button>
+          <button
+            style={{ ...btnStyle, opacity: currentIdx >= visiblePages.length - 1 ? 0.3 : 1 }}
+            disabled={currentIdx >= visiblePages.length - 1}
+            onClick={() => navigate(1)}
+            title="Next page"
+          >
+            ↓
+          </button>
         </div>
-      </div>
-    </div>
+      )}
+    </>
   )
 }
 
@@ -433,14 +289,7 @@ export function CenterPanel({ isDarkMode, importedFile, onImport }: CenterPanelP
   }
 
   if (importedFile.type === 'application/pdf') {
-    return (
-      <div
-        className="rounded-xl overflow-hidden shadow-2xl"
-        style={{ backgroundColor: isDarkMode ? '#000000' : '#ffffff' }}
-      >
-        <FileViewer file={importedFile} isDarkMode={isDarkMode} />
-      </div>
-    )
+    return <FileViewer file={importedFile} isDarkMode={isDarkMode} />
   }
 
   // Images, video, audio, etc. — natural size, centered
