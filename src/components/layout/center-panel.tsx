@@ -1,14 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Document, Page, pdfjs } from 'react-pdf'
+import { Document, Page } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 import { FileText, Music, File, Upload, SkipForward, RotateCcw } from 'lucide-react'
 import type { ImportedFile } from '../../App'
-
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString()
+// configures pdfjs.GlobalWorkerOptions.workerSrc for every pdf.js consumer
+import '../../lib/pdf'
 
 interface CenterPanelProps {
   isDarkMode: boolean

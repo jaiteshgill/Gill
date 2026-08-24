@@ -6,6 +6,7 @@ import { PlaybackBar } from './components/layout/playback-bar'
 import { QuestionsOverlay } from './components/layout/questions-overlay'
 import { AnnotationCanvas } from './components/layout/annotation-canvas'
 import { Button } from './components/ui/button'
+import { extractSlideMap } from './lib/extractSlideMap'
 
 export interface ImportedFile {
   name: string
@@ -73,7 +74,26 @@ function App() {
 
   const handleImport = (file: File) => {
     if (importedFile) URL.revokeObjectURL(importedFile.url)
-    setImportedFile({ name: file.name, type: file.type, url: URL.createObjectURL(file) })
+    const next = { name: file.name, type: file.type, url: URL.createObjectURL(file) }
+    setImportedFile(next)
+
+    // TEMPORARY (extraction verification) — logs the slide map, no AI call yet.
+    // Remove once generation is wired up.
+    if (next.type === 'application/pdf') {
+      extractSlideMap(next.url, next.name)
+        .then(map => {
+          console.log(`[extract] ${map.sourceFileName} — ${map.totalSlides} slides`)
+          console.table(map.slides.map(s => ({
+            page: s.index,
+            textChars: s.rawText.length,
+            snippet: s.rawText.slice(0, 60).replace(/\n/g, ' ⏎ '),
+            imageKB: s.imageUrl ? Math.round(s.imageUrl.length / 1024) : 0,
+          })))
+          // inspect a page image by hand: open(__slideMap.slides[0].imageUrl)
+          ;(window as unknown as { __slideMap: unknown }).__slideMap = map
+        })
+        .catch(err => console.error('[extract] failed', err))
+    }
   }
 
   return (
