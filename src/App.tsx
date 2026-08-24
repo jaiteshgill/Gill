@@ -81,8 +81,9 @@ function App() {
       {importedFile?.type === 'application/pdf' ? (
         /* PDF mode: entire main scrolls, dot grid tiles as background */
         <main
+          ref={mainRef}
           id="pdf-scroll"
-          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col items-center"
+          className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col items-center"
           style={{
             backgroundColor: isDarkMode ? '#1f1f1f' : '#fafaf8',
             backgroundImage: `radial-gradient(circle, ${isDarkMode ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.23)'} 1px, transparent 1px)`,
@@ -90,7 +91,45 @@ function App() {
             backgroundAttachment: 'local',
           }}
         >
-          <CenterPanel isDarkMode={isDarkMode} importedFile={importedFile} onImport={handleImport} />
+          <CenterPanel isDarkMode={isDarkMode} importedFile={importedFile} onImport={handleImport} zoom={zoom} />
+
+          <div
+            className="fixed bottom-[72px] right-4 flex items-center gap-1 rounded-lg px-2 py-1 z-50"
+            style={{
+              backgroundColor: isDarkMode ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.7)',
+              backdropFilter: 'blur(8px)',
+              border: `1px solid ${isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+            }}
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              onMouseDown={() => startZoom(-0.05)}
+              onMouseUp={stopZoom}
+              onMouseLeave={stopZoom}
+              className="h-7 w-7 hover:bg-black/5"
+              style={{ color: isDarkMode ? '#cccccc' : '#555555' }}
+            >
+              <ZoomOut className="h-3.5 w-3.5" />
+            </Button>
+            <span
+              className="text-xs font-medium tabular-nums w-9 text-center select-none"
+              style={{ color: isDarkMode ? '#aaaaaa' : '#666666' }}
+            >
+              {Math.round(zoom * 100)}%
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onMouseDown={() => startZoom(0.05)}
+              onMouseUp={stopZoom}
+              onMouseLeave={stopZoom}
+              className="h-7 w-7 hover:bg-black/5"
+              style={{ color: isDarkMode ? '#cccccc' : '#555555' }}
+            >
+              <ZoomIn className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </main>
       ) : (
         /* Default mode: chalk canvas with floating content */
