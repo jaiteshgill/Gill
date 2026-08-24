@@ -16,7 +16,9 @@ export interface ImportedFile {
 function App() {
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [importedFile, setImportedFile] = useState<ImportedFile | null>(null)
+  // reserved for the upcoming Settings panel — not wired to any UI yet
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('gill_anthropic_api_key') ?? '')
+  void apiKey
   const [questionsOpen, setQuestionsOpen] = useState(false)
   const [zoom, setZoom] = useState(1)
 
@@ -55,10 +57,12 @@ function App() {
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
+  // reserved for the upcoming Settings panel — not wired to any UI yet
   const handleSaveApiKey = (key: string) => {
     localStorage.setItem('gill_anthropic_api_key', key)
     setApiKey(key)
   }
+  void handleSaveApiKey
 
   const toggleDarkMode = () => {
     const next = !isDarkMode
